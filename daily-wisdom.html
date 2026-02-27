@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -70,7 +71,7 @@ body{padding-top:var(--safe-top);padding-bottom:var(--safe-bottom)}
   font-family:var(--font-hebrew);font-size:17px;line-height:1.9;color:var(--fg);
   transition:max-height 0.4s ease;
 }
-.hebrew-card p.collapsed{max-height:200px;overflow:hidden}
+.hebrew-card p.collapsed{max-height:280px;overflow:hidden}
 .hebrew-card .expand-btn{
   position:absolute;bottom:0;left:0;right:0;
   background:linear-gradient(transparent,var(--card) 50%);
@@ -115,6 +116,32 @@ textarea::placeholder{color:var(--accent);font-style:italic}
 }
 .save-btn:disabled{background:#d4c5b0;cursor:default}
 .save-btn.saved{background:var(--success)}
+.polish-btn{
+  background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:8px;
+  padding:11px 20px;font-size:14px;font-family:var(--font-body);
+  font-weight:500;cursor:pointer;letter-spacing:0.04em;transition:all 0.3s;
+}
+.polish-btn:hover{border-color:var(--accent);color:var(--fg)}
+.polish-btn:disabled{opacity:0.5;cursor:default}
+.polish-btn.polishing{border-color:var(--accent);color:var(--accent)}
+.polished-output{
+  margin-top:20px;padding:20px;background:var(--card);border:1px solid var(--border);
+  border-radius:10px;position:relative;
+}
+.polished-output .polished-label{
+  font-size:11px;color:var(--faint);letter-spacing:0.08em;font-weight:500;margin-bottom:10px;
+  text-transform:uppercase;
+}
+.polished-output .polished-text{
+  font-size:15px;line-height:1.75;color:var(--fg);white-space:pre-wrap;
+}
+.polished-output .polished-actions{display:flex;gap:8px;margin-top:14px}
+.polished-output .polished-actions button{
+  font-family:var(--font-body);font-size:12px;border-radius:5px;padding:6px 14px;
+  cursor:pointer;font-weight:500;
+}
+.copy-btn{background:var(--fg);color:var(--bg);border:none}
+.use-btn{background:transparent;color:var(--muted);border:1px solid var(--border)}
 
 /* Journal */
 .journal-header h2{font-size:26px;font-weight:400;margin-bottom:6px}
@@ -311,7 +338,7 @@ function goToDay(day) {
 async function renderDay() {
   const s = SOURCES[currentDay];
   const isToday = currentDay === getTodayDay();
-  const longHeb = s.hebrew.length > 200;
+  const longHeb = s.hebrew.length > 350;
   const ref = await getReflection(currentDay);
   
   const el = document.getElementById('view-today');
@@ -336,8 +363,10 @@ async function renderDay() {
     <textarea id="ref-input" placeholder="What does this teaching awaken in you today?...">${ref ? esc(ref.text) : ''}</textarea>
     <div class="save-row">
       <span class="timestamp" id="save-ts">${ref ? 'Saved: ' + new Date(ref.savedAt).toLocaleString() : ''}</span>
+      <button class="polish-btn" id="polish-btn" onclick="doPolish()">✦ Polish with AI</button>
       <button class="save-btn" id="save-btn" onclick="doSave()">Save Reflection</button>
     </div>
+    <div id="polished-container"></div>
   `;
 }
 
@@ -364,6 +393,96 @@ async function doSave() {
   btn.classList.add('saved');
   document.getElementById('save-ts').textContent = 'Saved: ' + new Date().toLocaleString();
   setTimeout(() => { btn.textContent = 'Save Reflection'; btn.classList.remove('saved'); btn.disabled = false; }, 2000);
+}
+
+const META_PROMPT = `Convert Raw Notes into Writing in the Voice of Chaim Davies
+
+You are given rough notes, transcripts, or voice-dictated ideas from Chaim Davies, written as a reflection on a classical rabbinic source text. Your task is to transform them into refined, publishable prose that preserves his thinking, structure, and spiritual intent — without diluting depth or flattening intensity.
+
+Core Mandates:
+1. Preserve the Mind Behind the Words — Do not replace his ideas with your own. Maintain his conceptual moves, source choices, and argumentative flow. Clarify — but never simplify away nuance. If something is structurally implied but underdeveloped, strengthen it organically using his existing logic.
+2. Reconstruct Conceptual Architecture — Organize fragmented thoughts into a coherent progression. Highlight patterns, tensions, remazim, linguistic connections, or structural "puzzle pieces" if present. Make the flow feel intentional and constructed, not transcribed.
+3. Maintain Torah Density — Preserve and properly format Hebrew/Aramaic sources where present. Retain authentic transliteration (Hakadosh Baruch Hu, Klal Yisrael, avodah, dveikus, etc.). When sources are referenced loosely, tighten them respectfully without academic overcorrection. The result should feel steeped in Torah, not summarized.
+4. Protect Emotional Cadence — Maintain warmth, urgency, reverence, and earnest intensity. Allow moments of wonder, buildup, and emphasis. Avoid cliché inspiration or artificial drama. The voice should feel alive, not edited into sterility.
+5. Move Toward Avodah — Ensure ideas land in lived spiritual responsibility. Translate abstraction into inner work naturally. Close sections with distilled, memorable insight.
+6. Elevate Without Overwriting — Refine language. Remove filler and repetition. Tighten phrasing. But do not make the writing sound academic, corporate, or generic. The finished piece should feel like him at his clearest — not like an AI improving him.
+
+Tone Targets: Spiritually alive, conceptually rigorous, relational but dignified, Orthodox Jewish resonance, structured yet passionate.
+
+Avoid: Flattening intensity, over-polishing into smooth blandness, replacing Hebrew richness with English abstraction, overexplaining obvious Torah concepts, adding ideas he did not imply.
+
+The final result should read as if Chaim sat down calmly after meditating on the source and wrote it himself — clearer, tighter, and fully formed. Output ONLY the polished reflection text, no preamble or commentary.`;
+
+async function doPolish() {
+  const text = document.getElementById('ref-input').value.trim();
+  if (!text) return;
+  
+  const btn = document.getElementById('polish-btn');
+  const container = document.getElementById('polished-container');
+  const s = SOURCES[currentDay];
+  
+  btn.disabled = true;
+  btn.classList.add('polishing');
+  btn.textContent = '✦ Polishing...';
+  container.innerHTML = '<div class="loading">Processing your reflection...</div>';
+  
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1500,
+        system: META_PROMPT,
+        messages: [{
+          role: 'user',
+          content: `Source Text: ${s.location}\n\nHebrew:\n${s.hebrew}\n\nEnglish Translation:\n${s.english}\n\n---\n\nChaim's Raw Reflection Notes:\n${text}`
+        }]
+      })
+    });
+    
+    const data = await response.json();
+    const polished = data.content.map(c => c.type === 'text' ? c.text : '').join('');
+    
+    container.innerHTML = `
+      <div class="polished-output">
+        <div class="polished-label">POLISHED REFLECTION</div>
+        <div class="polished-text">${esc(polished)}</div>
+        <div class="polished-actions">
+          <button class="copy-btn" onclick="copyPolished()">Copy</button>
+          <button class="use-btn" onclick="usePolished()">Replace Draft</button>
+        </div>
+      </div>
+    `;
+    
+    // Store polished text for copy/replace
+    window._polishedText = polished;
+    
+  } catch (err) {
+    container.innerHTML = '<div class="loading" style="color:#a85">Failed to connect to AI. If running locally, ensure you have network access.</div>';
+    console.error('Polish error:', err);
+  }
+  
+  btn.disabled = false;
+  btn.classList.remove('polishing');
+  btn.textContent = '✦ Polish with AI';
+}
+
+function copyPolished() {
+  if (window._polishedText) {
+    navigator.clipboard.writeText(window._polishedText).then(() => {
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = '✓ Copied';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    }).catch(() => {});
+  }
+}
+
+function usePolished() {
+  if (window._polishedText) {
+    document.getElementById('ref-input').value = window._polishedText;
+    document.getElementById('polished-container').innerHTML = '';
+  }
 }
 
 async function renderBrowse() {
