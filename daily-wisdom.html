@@ -143,7 +143,38 @@ textarea::placeholder{color:var(--accent);font-style:italic}
 }
 .grid button.is-today{background:var(--fg);color:var(--bg);font-weight:600;border-color:var(--fg)}
 .grid button.is-current{background:var(--accent);color:#fff;border-color:var(--accent)}
-.grid button.has-reflection{border-bottom:2px solid var(--success)}
+.grid button.has-reflection{border-color:var(--success);position:relative}
+.grid button.has-reflection::after{
+  content:'✓';position:absolute;top:1px;right:2px;font-size:7px;color:var(--success);font-weight:700;
+}
+.browse .legend{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap}
+.browse .legend span{font-size:11px;color:var(--faint);display:flex;align-items:center;gap:4px}
+.browse .legend .dot{width:10px;height:10px;border-radius:2px;border:1px solid var(--border)}
+.browse .legend .dot.today-dot{background:var(--fg);border-color:var(--fg)}
+.browse .legend .dot.refl-dot{background:var(--card);border-color:var(--success);position:relative}
+
+/* Settings */
+.settings h2{font-size:26px;font-weight:400;margin-bottom:24px}
+.settings .field{margin-bottom:24px}
+.settings label{display:block;font-size:13px;color:var(--faint);letter-spacing:0.05em;font-weight:500;margin-bottom:8px}
+.settings input[type="date"]{
+  font-family:var(--font-body);font-size:15px;color:var(--fg);
+  background:var(--card);border:1px solid var(--border);border-radius:8px;
+  padding:10px 14px;width:100%;outline:none;
+}
+.settings input[type="date"]:focus{border-color:var(--accent)}
+.settings .hint{font-size:12px;color:#a89e8e;margin-top:6px;line-height:1.5}
+.settings .actions{display:flex;gap:10px;margin-top:8px}
+.settings .actions button{
+  font-family:var(--font-body);font-size:13px;border-radius:6px;padding:8px 18px;
+  cursor:pointer;font-weight:500;transition:all 0.2s;
+}
+.settings .btn-primary{background:var(--fg);color:var(--bg);border:none}
+.settings .btn-secondary{background:transparent;color:var(--muted);border:1px solid var(--border)}
+.settings .current-info{
+  padding:14px 18px;background:var(--card);border:1px solid var(--border);
+  border-radius:8px;margin-bottom:20px;font-size:14px;line-height:1.6;color:var(--fg);
+}
 
 /* Loading spinner */
 .loading{text-align:center;color:var(--faint);font-style:italic;padding:20px}
@@ -166,9 +197,10 @@ textarea::placeholder{color:var(--accent);font-style:italic}
       <div class="sub">406 DAYS OF TORAH REFLECTION</div>
     </div>
     <div class="nav">
-      <button id="btn-today" class="active" onclick="showView('today')">Today</button>
+      <button id="btn-today" class="active" onclick="showView('today',true)">Today</button>
       <button id="btn-browse" onclick="showView('browse')">Browse</button>
       <button id="btn-journal" onclick="showView('journal')">Journal</button>
+      <button id="btn-settings" onclick="showView('settings')" style="font-size:15px;padding:5px 10px">⚙</button>
     </div>
   </div>
 </div>
@@ -177,6 +209,7 @@ textarea::placeholder{color:var(--accent);font-style:italic}
   <div id="view-today"></div>
   <div id="view-browse" style="display:none"></div>
   <div id="view-journal" style="display:none"></div>
+  <div id="view-settings" style="display:none"></div>
 </div>
 
 <script>
@@ -185,15 +218,29 @@ const TOTAL = SOURCES.length;
 const DB_NAME = 'daily-wisdom-db';
 const DB_STORE = 'reflections';
 let db = null;
-let currentDay = getTodayDay();
+let currentDay = 0;
 let currentView = 'today';
 let expandedHebrew = false;
+let dayOverride = null; // stored as ISO date string e.g. '2025-06-15'
 
 function getTodayDay() {
-  const start = new Date('2025-06-01');
-  const now = new Date();
+  const start = new Date('2026-01-01');
+  let now;
+  if (dayOverride) {
+    now = new Date(dayOverride + 'T12:00:00');
+  } else {
+    now = new Date();
+  }
   const diff = Math.floor((now - start) / 86400000);
   return ((diff % TOTAL) + TOTAL) % TOTAL;
+}
+
+function loadSettings() {
+  try {
+    const saved = localStorage.getItem('dw-day-override');
+    if (saved && saved !== 'null' && saved !== '') dayOverride = saved;
+  } catch { /* localStorage blocked */ }
+  currentDay = getTodayDay();
 }
 
 // IndexedDB for reliable local storage
@@ -238,23 +285,27 @@ function getAllReflections() {
 }
 
 // Views
-function showView(view) {
+function showView(view, resetToToday) {
   currentView = view;
   document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('btn-' + view).classList.add('active');
-  document.getElementById('view-today').style.display = view === 'today' ? '' : 'none';
-  document.getElementById('view-browse').style.display = view === 'browse' ? '' : 'none';
-  document.getElementById('view-journal').style.display = view === 'journal' ? '' : 'none';
+  ['today','browse','journal','settings'].forEach(v => {
+    document.getElementById('view-' + v).style.display = v === view ? '' : 'none';
+  });
   
-  if (view === 'today') { currentDay = getTodayDay(); renderDay(); }
+  if (view === 'today') {
+    if (resetToToday) currentDay = getTodayDay();
+    renderDay();
+  }
   else if (view === 'browse') renderBrowse();
   else if (view === 'journal') renderJournal();
+  else if (view === 'settings') renderSettings();
 }
 
 function goToDay(day) {
   currentDay = day;
   expandedHebrew = false;
-  showView('today');
+  showView('today', false);
 }
 
 async function renderDay() {
@@ -332,9 +383,83 @@ async function renderBrowse() {
   document.getElementById('view-browse').innerHTML = `
     <div class="browse">
       <h2>Browse All Days</h2>
+      <div class="legend">
+        <span><span class="dot today-dot"></span> Today</span>
+        <span><span class="dot refl-dot"></span> Has reflection</span>
+      </div>
       <div class="grid">${grid}</div>
     </div>
   `;
+}
+
+function renderSettings() {
+  const today = getTodayDay();
+  
+  // Calculate what the "real" day would be without override
+  const realStart = new Date('2026-01-01');
+  const realNow = new Date();
+  const realDiff = Math.floor((realNow - realStart) / 86400000);
+  const realDay = ((realDiff % TOTAL) + TOTAL) % TOTAL;
+  
+  const overrideDate = dayOverride || '';
+  
+  document.getElementById('view-settings').innerHTML = `
+    <div class="settings">
+      <h2>Settings</h2>
+      
+      <div class="current-info">
+        <strong>Current "today":</strong> Day ${today + 1} — ${esc(SOURCES[today].location)}<br>
+        ${dayOverride 
+          ? '<span style="color:var(--faint);font-size:12px">Using custom date: ' + dayOverride + '</span>' 
+          : '<span style="color:var(--faint);font-size:12px">Using actual date (Day ' + (realDay + 1) + ')</span>'}
+      </div>
+      
+      <div class="field">
+        <label>SET CUSTOM "TODAY" DATE</label>
+        <input type="date" id="date-override" value="${overrideDate}">
+        <div class="hint">
+          Pick any date to change which day the app considers "today." 
+          The 406-day cycle starts on January 1, 2026. Leave empty to use the real date.
+        </div>
+        <div class="actions">
+          <button class="btn-primary" onclick="applyDateOverride()">Apply</button>
+          <button class="btn-secondary" onclick="clearDateOverride()">Reset to Real Date</button>
+        </div>
+        <div id="settings-feedback" style="margin-top:12px;font-size:13px;display:none"></div>
+      </div>
+    </div>
+  `;
+}
+
+function applyDateOverride() {
+  const val = document.getElementById('date-override').value;
+  const fb = document.getElementById('settings-feedback');
+  if (!val) {
+    fb.style.display = 'block';
+    fb.style.color = '#a85';
+    fb.textContent = 'Please pick a date, or use "Reset to Real Date."';
+    return;
+  }
+  dayOverride = val;
+  try { localStorage.setItem('dw-day-override', val); } catch {}
+  currentDay = getTodayDay();
+  
+  fb.style.display = 'block';
+  fb.style.color = 'var(--success)';
+  fb.textContent = '✓ Applied! "Today" is now Day ' + (currentDay + 1) + ' — ' + SOURCES[currentDay].location;
+  
+  // Re-render the info box
+  const info = document.querySelector('.current-info');
+  if (info) {
+    info.innerHTML = '<strong>Current "today":</strong> Day ' + (currentDay + 1) + ' — ' + esc(SOURCES[currentDay].location) + '<br><span style="color:var(--faint);font-size:12px">Using custom date: ' + dayOverride + '</span>';
+  }
+}
+
+function clearDateOverride() {
+  dayOverride = null;
+  try { localStorage.removeItem('dw-day-override'); } catch {}
+  currentDay = getTodayDay();
+  renderSettings();
 }
 
 async function renderJournal() {
@@ -382,6 +507,7 @@ document.addEventListener('touchend', e => {
 });
 
 // Init
+loadSettings();
 openDB().then(() => renderDay());
 
 // Register service worker
